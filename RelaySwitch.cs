@@ -1,6 +1,9 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Management;
 using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
 
 namespace RelaySwitchApp
 {
@@ -31,6 +34,63 @@ namespace RelaySwitchApp
             byte c = energized ? (byte)0x01 : (byte)0x00;
             byte checksum = (byte)((a + b + c) & 0xFF);
             return new byte[] { a, b, c, checksum };
+        }
+
+        /// <summary>Hardware ID prefix of the WCH CH340 bridge used by these boards.</summary>
+        public const string HardwareIdPrefix = @"USB\VID_1A86&PID_7523";
+
+        static readonly Regex ComPattern = new Regex(@"\((COM\d+)\)", RegexOptions.IgnoreCase);
+
+        /// <summary>Pulls "COM3" out of a PnP friendly name, or returns null.</summary>
+        public static string ExtractComPort(string friendlyName)
+        {
+            if (String.IsNullOrEmpty(friendlyName)) return null;
+            Match m = ComPattern.Match(friendlyName);
+            return m.Success ? m.Groups[1].Value.ToUpperInvariant() : null;
+        }
+
+        /// <summary>
+        /// Finds every serial port belonging to a CH340 relay board.
+        /// Filtering is done in C# rather than WQL to avoid backslash-escaping
+        /// pitfalls in the DeviceID LIKE clause.
+        /// </summary>
+        public static string[] FindAllPorts()
+        {
+            List<string> found = new List<string>();
+            try
+            {
+                using (ManagementObjectSearcher searcher = new ManagementObjectSearcher(
+                    "SELECT DeviceID, Name FROM Win32_PnPEntity WHERE Name LIKE '%(COM%'"))
+                {
+                    foreach (ManagementBaseObject obj in searcher.Get())
+                    {
+                        object idObj = obj["DeviceID"];
+                        object nameObj = obj["Name"];
+                        if (idObj == null || nameObj == null) continue;
+
+                        string id = idObj.ToString();
+                        if (id.IndexOf(HardwareIdPrefix, StringComparison.OrdinalIgnoreCase) != 0)
+                            continue;
+
+                        string port = ExtractComPort(nameObj.ToString());
+                        if (port != null && !found.Contains(port)) found.Add(port);
+                    }
+                }
+            }
+            catch (Exception)
+            {
+                // WMI can fail on locked-down machines; treat as "no boards found"
+                // rather than crashing the app before the window appears.
+            }
+            found.Sort(StringComparer.OrdinalIgnoreCase);
+            return found.ToArray();
+        }
+
+        /// <summary>First detected relay board, or null if none is present.</summary>
+        public static string FindPort()
+        {
+            string[] ports = FindAllPorts();
+            return ports.Length > 0 ? ports[0] : null;
         }
     }
 
@@ -98,6 +158,14 @@ namespace RelaySwitchApp
             AssertBytes("device OFF emits coil-on frame",
                         RelayPort.BuildFrame(1, RelayPort.CoilStateFor(false)), coilOn);
 
+            // Port-name parsing is pure string work and is tested without hardware.
+            AssertTrue("parses COM3 from CH340 friendly name",
+                RelayPort.ExtractComPort("USB-SERIAL CH340 (COM3)") == "COM3");
+            AssertTrue("parses two-digit port",
+                RelayPort.ExtractComPort("USB-SERIAL CH340 (COM17)") == "COM17");
+            AssertTrue("returns null when no port present",
+                RelayPort.ExtractComPort("Some Other Device") == null);
+
             Console.WriteLine(failures == 0
                 ? "\nAll self-tests passed."
                 : "\n" + failures + " self-test(s) FAILED.");
@@ -159,6 +227,22 @@ namespace RelaySwitchApp
             {
                 UseCallersConsole();
                 return SelfTest.Run() == 0 ? 0 : 1;
+            }
+
+            bool probe = false;
+            for (int i = 0; i < args.Length; i++)
+                if (String.Equals(args[i], "--probe", StringComparison.OrdinalIgnoreCase))
+                    probe = true;
+
+            if (probe)
+            {
+                // Reads device metadata only; sends nothing to the board, so the
+                // relay does not move and the live load is untouched.
+                UseCallersConsole();
+                string[] ports = RelayPort.FindAllPorts();
+                if (ports.Length == 0) Console.WriteLine("No relay board found.");
+                else foreach (string p in ports) Console.WriteLine("Found relay board on " + p);
+                return ports.Length > 0 ? 0 : 1;
             }
 
             return 0;
