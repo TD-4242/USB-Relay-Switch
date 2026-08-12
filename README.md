@@ -3,7 +3,15 @@
 Portable single-file GUI controlling a device wired through the NC contacts of an
 LCUS-style CH340 USB relay board.
 
-![the switch](docs/rocker.png)
+<p align="center">
+  <img src="docs/interface.png" alt="The relay switch interface: an industrial rocker switch in the ON position with a lit red indicator lamp" width="362">
+</p>
+
+## Download
+
+Grab `RelaySwitch.exe` from the [latest release](https://github.com/TD-4242/USB-Relay-Switch/releases/latest)
+and double-click it. No install, no runtime, no internet — a single ~18 KB file that
+runs on Windows 10 and 11.
 
 ## Wiring
 
@@ -38,7 +46,17 @@ at any size. Right-click for "Always on top" and "Retry / rescan ports".
 
 Run `build.cmd`. It uses the `csc.exe` built into Windows, so there is nothing to
 install and no internet access needed. The code targets the .NET Framework 4.0 API
-surface, so the ~20 KB output runs on all Windows 10 releases and Windows 11.
+surface, so the ~18 KB output runs on all Windows 10 releases and Windows 11.
+
+## Releasing
+
+Pushing a version tag builds the exe on a Windows runner, gates it on `--selftest`,
+and publishes a GitHub Release with the binary attached:
+
+```bash
+git tag v0.0.2
+git push origin v0.0.2
+```
 
 ## Related
 

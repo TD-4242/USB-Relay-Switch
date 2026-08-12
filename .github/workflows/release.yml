@@ -1,0 +1,57 @@
+name: Release
+
+# Publishes a GitHub Release whenever a version tag is pushed:
+#   git tag v0.0.2 && git push origin v0.0.2
+#
+# The build needs no SDK install: csc.exe ships with Windows, and the code
+# targets the .NET Framework 4.0 API surface.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Build
+        shell: cmd
+        run: build.cmd
+
+      - name: Self-test
+        # Pure-logic assertions on the frame bytes and the NC inversion.
+        # Needs no relay board, so it gates every release.
+        shell: cmd
+        run: RelaySwitch.exe --selftest
+
+      - name: Report artifact size
+        shell: pwsh
+        run: |
+          $exe = Get-Item RelaySwitch.exe
+          Write-Host ("RelaySwitch.exe: {0:N1} KB" -f ($exe.Length / 1KB))
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$env:GITHUB_REF_NAME" RelaySwitch.exe `
+            --title "$env:GITHUB_REF_NAME" `
+            --generate-notes `
+            --notes "Portable single-file relay switch GUI. Download ``RelaySwitch.exe`` and double-click it - no install, no runtime, no internet. Runs on Windows 10 and 11."
+
+      - name: Upload build artifact
+        # Gives workflow_dispatch runs something to download even without a tag.
+        uses: actions/upload-artifact@v4
+        with:
+          name: RelaySwitch
+          path: RelaySwitch.exe
