@@ -1,10 +1,13 @@
 using System;
 using System.Collections.Generic;
+using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.IO;
 using System.IO.Ports;
 using System.Management;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
+using System.Windows.Forms;
 
 namespace RelaySwitchApp
 {
@@ -128,6 +131,164 @@ namespace RelaySwitchApp
         }
     }
 
+    /// <summary>
+    /// A large industrial rocker/breaker switch. Knows nothing about serial ports:
+    /// On == true means the DEVICE is powered.
+    /// </summary>
+    class RockerSwitch : Control
+    {
+        bool on;
+        public event EventHandler Toggled;
+
+        public RockerSwitch()
+        {
+            SetStyle(ControlStyles.AllPaintingInWmPaint
+                   | ControlStyles.UserPaint
+                   | ControlStyles.OptimizedDoubleBuffer
+                   | ControlStyles.ResizeRedraw
+                   | ControlStyles.Selectable, true);
+            BackColor = Color.FromArgb(28, 28, 30);
+            Cursor = Cursors.Hand;
+        }
+
+        /// <summary>Device power. Setting this repaints WITHOUT raising Toggled,
+        /// so the form can revert the display after a failed write.</summary>
+        public bool On
+        {
+            get { return on; }
+            set { if (on != value) { on = value; Invalidate(); } }
+        }
+
+        protected override void OnMouseClick(MouseEventArgs e)
+        {
+            base.OnMouseClick(e);
+            if (!Enabled || e.Button != MouseButtons.Left) return;
+            on = !on;
+            Invalidate();
+            if (Toggled != null) Toggled(this, EventArgs.Empty);
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
+            g.Clear(BackColor);
+
+            // Draw against a normalised 100x100 model, then scale to the control,
+            // so the switch stays crisp at any window size.
+            float side = Math.Min(Width, Height);
+            if (side <= 0) return;
+            float unit = side / 100f;
+            float ox = (Width - side) / 2f;
+            float oy = (Height - side) / 2f;
+
+            GraphicsState state = g.Save();
+            g.TranslateTransform(ox, oy);
+            g.ScaleTransform(unit, unit);
+
+            bool live = Enabled;
+            DrawBezel(g);
+            DrawRocker(g, live);
+            DrawLamp(g, live && on);
+
+            g.Restore(state);
+        }
+
+        static void DrawBezel(Graphics g)
+        {
+            using (GraphicsPath path = RoundedRect(18f, 8f, 64f, 76f, 6f))
+            using (LinearGradientBrush brush = new LinearGradientBrush(
+                       new RectangleF(18f, 7f, 64f, 78f),
+                       Color.FromArgb(70, 70, 74), Color.FromArgb(40, 40, 44),
+                       LinearGradientMode.Vertical))
+            using (Pen pen = new Pen(Color.FromArgb(20, 20, 22), 1.2f))
+            {
+                g.FillPath(brush, path);
+                g.DrawPath(pen, path);
+            }
+        }
+
+        /// <summary>
+        /// Two trapezoid halves fake the tilt: the raised half is lit and taller,
+        /// the pressed half is recessed and dark.
+        /// </summary>
+        void DrawRocker(Graphics g, bool live)
+        {
+            Color upFace   = on && live ? Color.FromArgb(226, 226, 230) : Color.FromArgb(120, 120, 126);
+            Color downFace = on ? Color.FromArgb(70, 70, 76) : Color.FromArgb(210, 210, 214);
+            if (!live) { upFace = Color.FromArgb(96, 96, 100); downFace = Color.FromArgb(80, 80, 84); }
+
+            // Upper half: raised when the device is powered.
+            using (GraphicsPath upper = new GraphicsPath())
+            using (GraphicsPath lower = new GraphicsPath())
+            {
+                float inset = on ? 0f : 3f;
+                upper.AddPolygon(new PointF[] {
+                    new PointF(26f, 20f + inset), new PointF(74f, 20f + inset),
+                    new PointF(70f, 46f), new PointF(30f, 46f) });
+                lower.AddPolygon(new PointF[] {
+                    new PointF(30f, 46f), new PointF(70f, 46f),
+                    new PointF(74f, 72f - (3f - inset)), new PointF(26f, 72f - (3f - inset)) });
+
+                using (SolidBrush ub = new SolidBrush(upFace))
+                using (SolidBrush lb = new SolidBrush(downFace))
+                using (Pen edge = new Pen(Color.FromArgb(24, 24, 26), 1f))
+                {
+                    g.FillPath(ub, upper); g.DrawPath(edge, upper);
+                    g.FillPath(lb, lower); g.DrawPath(edge, lower);
+                }
+            }
+
+            using (Font f = new Font("Segoe UI", 7f, FontStyle.Bold, GraphicsUnit.Pixel))
+            using (StringFormat sf = new StringFormat())
+            {
+                sf.Alignment = StringAlignment.Center;
+                sf.LineAlignment = StringAlignment.Center;
+                using (SolidBrush tb = new SolidBrush(on ? Color.FromArgb(30, 30, 34) : Color.FromArgb(210, 210, 214)))
+                    g.DrawString("ON", f, tb, new RectangleF(26f, 24f, 48f, 18f), sf);
+                using (SolidBrush tb = new SolidBrush(on ? Color.FromArgb(200, 200, 204) : Color.FromArgb(40, 40, 44)))
+                    g.DrawString("OFF", f, tb, new RectangleF(26f, 50f, 48f, 18f), sf);
+            }
+        }
+
+        void DrawLamp(Graphics g, bool lit)
+        {
+            RectangleF lamp = new RectangleF(45f, 88f, 10f, 10f);
+            if (lit)
+            {
+                using (GraphicsPath glow = new GraphicsPath())
+                {
+                    glow.AddEllipse(RectangleF.Inflate(lamp, 7f, 7f));
+                    using (PathGradientBrush pg = new PathGradientBrush(glow))
+                    {
+                        pg.CenterColor = Color.FromArgb(160, 255, 60, 40);
+                        pg.SurroundColors = new Color[] { Color.FromArgb(0, 255, 60, 40) };
+                        g.FillPath(pg, glow);
+                    }
+                }
+            }
+            using (SolidBrush b = new SolidBrush(lit ? Color.FromArgb(255, 70, 50) : Color.FromArgb(70, 26, 24)))
+            using (Pen p = new Pen(Color.FromArgb(20, 20, 22), 1f))
+            {
+                g.FillEllipse(b, lamp);
+                g.DrawEllipse(p, lamp);
+            }
+        }
+
+        static GraphicsPath RoundedRect(float x, float y, float w, float h, float r)
+        {
+            GraphicsPath path = new GraphicsPath();
+            float d = r * 2f;
+            path.AddArc(x, y, d, d, 180, 90);
+            path.AddArc(x + w - d, y, d, d, 270, 90);
+            path.AddArc(x + w - d, y + h - d, d, d, 0, 90);
+            path.AddArc(x, y + h - d, d, d, 90, 90);
+            path.CloseFigure();
+            return path;
+        }
+    }
+
     static class SelfTest
     {
         static int failures;
@@ -212,6 +373,9 @@ namespace RelaySwitchApp
         [DllImport("kernel32.dll")]
         static extern bool AttachConsole(int dwProcessId);
 
+        [DllImport("user32.dll")]
+        static extern bool SetProcessDPIAware();
+
         /// <summary>
         /// A /target:winexe build has no console of its own, so console output is
         /// discarded by default. Attach to the caller's console, then rebind
@@ -277,6 +441,28 @@ namespace RelaySwitchApp
                 if (ports.Length == 0) Console.WriteLine("No relay board found.");
                 else foreach (string p in ports) Console.WriteLine("Found relay board on " + p);
                 return ports.Length > 0 ? 0 : 1;
+            }
+
+            bool preview = false;
+            for (int i = 0; i < args.Length; i++)
+                if (String.Equals(args[i], "--preview", StringComparison.OrdinalIgnoreCase))
+                    preview = true;
+
+            if (preview)
+            {
+                // Renders the widget with NO serial port attached, so the graphic
+                // can be reviewed without touching the live load.
+                SetProcessDPIAware();
+                Application.EnableVisualStyles();
+                Form f = new Form();
+                f.Text = "RockerSwitch preview";
+                f.ClientSize = new Size(320, 320);
+                f.BackColor = Color.FromArgb(28, 28, 30);
+                RockerSwitch rs = new RockerSwitch();
+                rs.Dock = DockStyle.Fill;
+                f.Controls.Add(rs);
+                Application.Run(f);
+                return 0;
             }
 
             return 0;
