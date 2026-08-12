@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.IO.Ports;
 using System.Management;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
@@ -11,7 +12,7 @@ namespace RelaySwitchApp
     /// Serial protocol and wiring semantics for the LCUS-style relay board.
     /// This class is the ONLY place that knows the load is on the NC contacts.
     /// </summary>
-    static partial class RelayPort
+    partial class RelayPort
     {
         /// <summary>
         /// True when the load is wired to the normally-closed contacts, so a
@@ -91,6 +92,39 @@ namespace RelaySwitchApp
         {
             string[] ports = FindAllPorts();
             return ports.Length > 0 ? ports[0] : null;
+        }
+
+        public const int BaudRate = 9600;
+        public const int DefaultChannel = 1;
+
+        readonly string portName;
+
+        public RelayPort(string portName)
+        {
+            if (String.IsNullOrEmpty(portName)) throw new ArgumentNullException("portName");
+            this.portName = portName;
+        }
+
+        public string PortName { get { return portName; } }
+
+        /// <summary>
+        /// Sets DEVICE power, applying the NC inversion. This is the only public
+        /// way to change relay state; callers never deal in coil state or frames.
+        /// Throws on failure so the caller can revert the UI.
+        /// </summary>
+        public void SetDevicePower(int channel, bool powered)
+        {
+            byte[] frame = BuildFrame(channel, CoilStateFor(powered));
+
+            // Opened per command and closed immediately, so relay.ps1 and other
+            // tools stay usable while this app is running, and an unplug between
+            // clicks surfaces as a clean error rather than a stale handle.
+            using (SerialPort port = new SerialPort(portName, BaudRate, Parity.None, 8, StopBits.One))
+            {
+                port.WriteTimeout = 1000;
+                port.Open();
+                port.Write(frame, 0, frame.Length);
+            }
         }
     }
 
