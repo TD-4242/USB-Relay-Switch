@@ -289,6 +289,170 @@ namespace RelaySwitchApp
         }
     }
 
+    class MainForm : Form
+    {
+        const int WM_SIZING = 0x0214;
+        const int MinSide = 220;
+
+        readonly RockerSwitch rocker = new RockerSwitch();
+        readonly Label status = new Label();
+        readonly ComboBox portPicker = new ComboBox();
+        RelayPort relay;
+
+        public MainForm()
+        {
+            Text = "Relay Switch";
+            BackColor = Color.FromArgb(28, 28, 30);
+            ClientSize = new Size(340, 340);
+            MinimumSize = new Size(MinSide, MinSide);
+            StartPosition = FormStartPosition.CenterScreen;
+
+            status.Dock = DockStyle.Bottom;
+            status.Height = 34;
+            status.TextAlign = ContentAlignment.MiddleCenter;
+            status.ForeColor = Color.FromArgb(190, 190, 196);
+            status.Font = new Font("Segoe UI", 9f);
+
+            portPicker.Dock = DockStyle.Bottom;
+            portPicker.DropDownStyle = ComboBoxStyle.DropDownList;
+            portPicker.Visible = false;
+            portPicker.SelectedIndexChanged += delegate
+            {
+                if (portPicker.SelectedItem != null)
+                {
+                    relay = new RelayPort(portPicker.SelectedItem.ToString());
+                    ShowReady();
+                }
+            };
+
+            rocker.Dock = DockStyle.Fill;
+            rocker.Toggled += OnToggled;
+
+            // Added Fill-first so WinForms docks it last and it takes the remainder,
+            // leaving the status line at the bottom and the picker just above it.
+            Controls.Add(rocker);
+            Controls.Add(portPicker);
+            Controls.Add(status);
+
+            BuildContextMenu();
+            Discover();
+        }
+
+        void BuildContextMenu()
+        {
+            ContextMenuStrip menu = new ContextMenuStrip();
+
+            ToolStripMenuItem top = new ToolStripMenuItem("Always on top");
+            top.CheckOnClick = true;
+            top.Click += delegate { TopMost = top.Checked; };
+            menu.Items.Add(top);
+
+            ToolStripMenuItem retry = new ToolStripMenuItem("Retry / rescan ports");
+            retry.Click += delegate { Discover(); };
+            menu.Items.Add(retry);
+
+            ContextMenuStrip = menu;
+            rocker.ContextMenuStrip = menu;
+        }
+
+        void Discover()
+        {
+            string[] ports = RelayPort.FindAllPorts();
+
+            portPicker.Visible = ports.Length > 1;
+            portPicker.Items.Clear();
+            foreach (string p in ports) portPicker.Items.Add(p);
+
+            if (ports.Length == 0)
+            {
+                relay = null;
+                rocker.Enabled = false;
+                rocker.On = false;
+                status.Text = "No relay board found  -  right-click to retry";
+                return;
+            }
+
+            if (ports.Length > 1) portPicker.SelectedIndex = 0;
+            relay = new RelayPort(ports[0]);
+            rocker.Enabled = true;
+            ResetToPowered();
+        }
+
+        /// <summary>
+        /// Sends the coil-de-energize frame once so the graphic and the hardware
+        /// are guaranteed to agree. Under NC wiring this RESTORES power.
+        /// </summary>
+        void ResetToPowered()
+        {
+            try
+            {
+                relay.SetDevicePower(RelayPort.DefaultChannel, true);
+                rocker.On = true;
+                ShowReady();
+            }
+            catch (Exception ex)
+            {
+                rocker.Enabled = false;
+                status.Text = "Error: " + ex.Message;
+            }
+        }
+
+        void ShowReady()
+        {
+            status.Text = String.Format("Device {0}  -  relay 1 on {1}",
+                rocker.On ? "ON" : "OFF",
+                relay == null ? "-" : relay.PortName);
+        }
+
+        void OnToggled(object sender, EventArgs e)
+        {
+            bool desired = rocker.On;
+            if (relay == null) { rocker.On = !desired; return; }
+
+            try
+            {
+                relay.SetDevicePower(RelayPort.DefaultChannel, desired);
+                ShowReady();
+            }
+            catch (Exception ex)
+            {
+                // Never claim a state the hardware did not accept.
+                rocker.On = !desired;
+                status.Text = "Error: " + ex.Message;
+            }
+        }
+
+        /// <summary>Locks the window to a square while the user drags any edge or corner.</summary>
+        protected override void WndProc(ref Message m)
+        {
+            if (m.Msg == WM_SIZING)
+            {
+                RECT r = (RECT)Marshal.PtrToStructure(m.LParam, typeof(RECT));
+                int edge = m.WParam.ToInt32();
+                int w = r.Right - r.Left;
+                int h = r.Bottom - r.Top;
+
+                // Dragging a horizontal edge changes height, so height drives the
+                // square; dragging a vertical edge changes width, so width drives it.
+                int side = Math.Max(MinSide, edge == 3 || edge == 6 ? h   // top / bottom
+                                          : edge == 1 || edge == 2 ? w   // left / right
+                                          : Math.Max(w, h));             // corners
+
+                // Grow away from whichever edge is anchored.
+                if (edge == 1 || edge == 4 || edge == 7) r.Left = r.Right - side; else r.Right = r.Left + side;
+                if (edge == 3 || edge == 4 || edge == 5) r.Top = r.Bottom - side; else r.Bottom = r.Top + side;
+
+                Marshal.StructureToPtr(r, m.LParam, false);
+                m.Result = (IntPtr)1;
+                return;
+            }
+            base.WndProc(ref m);
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct RECT { public int Left, Top, Right, Bottom; }
+    }
+
     static class SelfTest
     {
         static int failures;
@@ -465,6 +629,10 @@ namespace RelaySwitchApp
                 return 0;
             }
 
+            SetProcessDPIAware();
+            Application.EnableVisualStyles();
+            Application.SetCompatibleTextRenderingDefault(false);
+            Application.Run(new MainForm());
             return 0;
         }
     }
