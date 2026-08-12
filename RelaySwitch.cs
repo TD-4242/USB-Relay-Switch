@@ -303,7 +303,10 @@ namespace RelaySwitchApp
         {
             Text = "Relay Switch";
             BackColor = Color.FromArgb(28, 28, 30);
-            ClientSize = new Size(340, 340);
+            // Set the OUTER size, not ClientSize: WM_SIZING constrains the window
+            // rectangle, so the app must also OPEN square or the first drag would
+            // visibly jump to correct it.
+            Size = new Size(380, 380);
             MinimumSize = new Size(MinSide, MinSide);
             StartPosition = FormStartPosition.CenterScreen;
 
