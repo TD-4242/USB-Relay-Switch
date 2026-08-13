@@ -13,6 +13,43 @@ Grab `RelaySwitch.exe` from the [latest release](https://github.com/TD-4242/USB-
 and double-click it. No install, no runtime, no internet — a single ~18 KB file that
 runs on Windows 10 and 11.
 
+## Compatible hardware
+
+Developed and tested against an **LCUS-1 USB relay module** — a single-channel 5 V board
+with an on-board WCH CH340 USB-to-serial bridge. These are sold under many brand names
+(Taidda, SMAKN, NYBG, and others) but are the same reference design; the one used here
+is [ASIN B07WFVN1FK](https://www.amazon.com/dp/B07WFVN1FK).
+
+| | |
+|---|---|
+| USB hardware ID | `USB\VID_1A86&PID_7523` (WCH CH340) |
+| Channels | 1 |
+| Board power | 5 V from USB |
+| Serial | 9600 baud, 8 data bits, no parity, 1 stop bit |
+| Command frame | `A0 <channel> <state> <checksum>` |
+| Terminals | NO / COM / NC screw terminals |
+| Contact rating | Typically 10 A @ 250 V AC, 10 A @ 30 V DC — **check the marking on your own relay can before switching mains** |
+
+### What else should work
+
+- **Any CH340-based relay board speaking the `A0` frame protocol.** Detection matches on
+  the CH340 hardware ID, and the frame checksum is computed rather than hardcoded.
+- **Multi-channel LCUS boards (LCUS-2, LCUS-4).** They will be detected and channel 1
+  will work, but this app only drives channel 1 — the other channels are not exposed.
+
+### What will not work
+
+- **HID-based USB relay boards** (commonly `VID_16C0&PID_05DF`). These are not serial
+  devices at all and are neither detected nor addressable by this protocol.
+- **Relay boards using a different USB-serial chip** (FTDI, CP2102, PL2303). Even where
+  the command protocol matches, auto-detection filters on the CH340 hardware ID, so
+  these will report "No relay board found".
+- **Boards using a different command protocol**, such as the `FF 01 01` family or ones
+  expecting ASCII `ON`/`OFF`.
+
+If your board is serial-based and speaks the `A0` protocol but uses another USB chip,
+changing `RelayPort.HardwareIdPrefix` is the only edit needed.
+
 ## Wiring
 
 The load is on the **normally-closed** contacts, so the device is powered whenever
